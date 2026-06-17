@@ -190,9 +190,9 @@ exigen una infraestructura robusta que garantice:
 
 #### Configuración de Red (Netplan)
 
-**Archivo:** `/etc/netplan/00-installer-config.yaml`
+**Archivo:** `sudo nano /etc/netplan/50-cloud-init.yaml`
 
-**Base de Datos – Server-167**
+**Proxy – Server-162**
 
 ```yaml
 network:
@@ -200,15 +200,23 @@ network:
   ethernets:
     ens18:
       dhcp4: no
+      optional: true
       addresses:
-        - 192.168.207.6/24
+        - "192.168.100.162/24"
       routes:
         - to: default
-          via: 192.168.207.1
+          via: "192.168.100.1"
       nameservers:
         addresses:
           - 8.8.8.8
           - 1.1.1.1
+  vlans:
+    vlan207:
+      id: 207
+      link: ens18
+      dhcp4: no
+      addresses:
+        - "192.168.207.1/29"
 ```
 
 **Propósito:**
@@ -221,32 +229,41 @@ network:
 
 #### Configuración del Balanceador NGINX
 
-**Archivo:** `/etc/nginx/sites-available/examenes-linea`
+**Archivo:** `sudo nano /etc/nginx/sites-available/balanceador.weblinea`
 
 ```nginx
-upstream backend_servers {
-    server 192.168.207.2:3000;
-    server 192.168.207.3:3000;
+upstream backend_examenes {
+    server 192.168.207.2:3000 max_fails=3 fail_timeout=30s;
+    server 192.168.207.3:3000 max_fails=3 fail_timeout=30s;
+    keepalive 32;
 }
 
+# HTTPS
 server {
-    listen 80;
-    server_name examenes-linea.rootcode.com.bo;
+    listen 192.168.100.162:443 ssl;
+    server_name _;
 
-    return 301 https://$host$request_uri;
-}
+    ssl_certificate /etc/nginx/ssl/examenes.crt;
+    ssl_certificate_key /etc/nginx/ssl/examenes.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
 
-server {
-    listen 443 ssl;
-    server_name examenes-linea.rootcode.com.bo;
-
-    ssl_certificate /etc/letsencrypt/live/examenes-linea.rootcode.com.bo/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/examenes-linea.rootcode.com.bo/privkey.pem;
+    access_log /var/log/nginx/balanceador_access.log;
+    error_log /var/log/nginx/balanceador_error.log;
 
     location / {
-        proxy_pass http://backend_servers;
+        proxy_pass http://backend_examenes;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /health {
+        return 200 "Balanceador OK\n";
     }
 }
 ```
@@ -306,9 +323,11 @@ sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
 sudo ufw allow 22/tcp
+sudo usw allow 2222/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 3306/tcp
+sudo ufw allow 9100/tcp
 
 sudo ufw enable
 ```
